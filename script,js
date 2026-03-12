@@ -1,0 +1,1404 @@
+const STORAGE_KEY = 'shifts';
+const SETTINGS_KEY = 'shiftSettings';
+const STAFF_KEY = 'staffData';
+const MESSAGE_KEY = 'messages';
+const LAST_READ_KEY = 'lastReadMessage';
+const ADMIN_PASSWORD = 'tannge';
+
+let isAdminMode = false;
+let currentView = 'list';
+let currentUser = null;
+let selectedDates = [];
+let currentCalendarMonth = new Date();
+let currentPage = 'shift';
+let lastReadMessageTime = null;
+
+// スタッフデータを取得
+function getStaffData() {
+    const data = localStorage.getItem(STAFF_KEY);
+    return data ? JSON.parse(data) : [];
+}
+
+// スタッフデータを保存
+function saveStaffData(staffData) {
+    localStorage.setItem(STAFF_KEY, JSON.stringify(staffData));
+}
+
+// スタッフを登録
+function registerStaff(name, password) {
+    const staffData = getStaffData();
+    
+    // 既に存在するか確認
+    if (staffData.find(s => s.name === name)) {
+        return false;
+    }
+    
+    staffData.push({ name, password });
+    saveStaffData(staffData);
+    return true;
+}
+
+// ログイン処理
+function login(name, password, asAdmin) {
+    if (asAdmin) {
+        if (password === ADMIN_PASSWORD) {
+            currentUser = { name: '管理者', isAdmin: true };
+            isAdminMode = true;
+            return true;
+        }
+        return false;
+    } else {
+        const staffData = getStaffData();
+        const staff = staffData.find(s => s.name === name && s.password === password);
+        if (staff) {
+            currentUser = { name: staff.name, isAdmin: false };
+            isAdminMode = false;
+            return true;
+        }
+        return false;
+    }
+}
+
+// ログアウト
+function logout() {
+    currentUser = null;
+    isAdminMode = false;
+    document.getElementById('mainScreen').style.display = 'none';
+    document.getElementById('loginScreen').style.display = 'flex';
+    document.getElementById('loginPassword').value = '';
+    document.getElementById('loginAsAdmin').checked = false;
+}
+
+// ログイン画面の初期化
+function initLoginScreen() {
+    const staffData = getStaffData();
+    const loginNameSelect = document.getElementById('loginName');
+    
+    loginNameSelect.innerHTML = '<option value="">選択してください</option>' +
+        '<option value="店長">店長</option>' +
+        staffData.map(staff => `<option value="${staff.name}">${staff.name}</option>`).join('');
+}
+
+// DOMContentLoaded後にイベントリスナーを設定
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+    initializeApp();
+}
+
+function initializeApp() {
+    initLoginScreen();
+    
+    // ログインフォーム送信
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const name = document.getElementById('loginName').value;
+        const password = document.getElementById('loginPassword').value;
+        const asAdmin = document.getElementById('loginAsAdmin').checked;
+        
+        if (asAdmin || name === '店長') {
+            if (login('管理者', password, true)) {
+                document.getElementById('loginScreen').style.display = 'none';
+                document.getElementById('mainScreen').style.display = 'block';
+                document.getElementById('currentUser').textContent = '👤 店長（管理者）';
+                updateAdminUI();
+                initMainScreen();
+            } else {
+                alert('管理者パスワードが正しくありません');
+            }
+        } else {
+            if (!name) {
+                alert('名前を選択してください');
+                return;
+            }
+            
+            if (login(name, password, false)) {
+                document.getElementById('loginScreen').style.display = 'none';
+                document.getElementById('mainScreen').style.display = 'block';
+                document.getElementById('currentUser').textContent = `👤 ${name}`;
+                updateAdminUI();
+                initMainScreen();
+            } else {
+                alert('名前またはパスワードが正しくありません');
+            }
+        }
+    });
+
+    // スタッフ登録フォーム
+    document.getElementById('staffForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const name = document.getElementById('newStaffName').value.trim();
+        const password = document.getElementById('newStaffPassword').value;
+        
+        if (!name || !password) {
+            alert('名前とパスワードを入力してください');
+            return;
+        }
+        
+        if (registerStaff(name, password)) {
+            alert('スタッフを登録しました');
+            document.getElementById('newStaffName').value = '';
+            document.getElementById('newStaffPassword').value = '';
+            displayStaffList();
+            initLoginScreen();
+            updateStaffNameSelect();
+        } else {
+            alert('このスタッフ名は既に登録されています');
+        }
+    });
+
+    // シフト登録フォーム
+    document.getElementById('shiftForm').addEventListener('submit', handleShiftSubmit);
+    
+    // メッセージフォーム
+    document.getElementById('messageForm').addEventListener('submit', handleMessageSubmit);
+}
+
+function handleShiftSubmit(e) {
+    e.preventDefault();
+    
+    console.log('シフト登録開始');
+    console.log('isAdminMode:', isAdminMode);
+    console.log('currentUser:', currentUser);
+    
+    let staffName;
+    if (isAdminMode) {
+        staffName = document.getElementById('staffName').value;
+        if (!staffName) {
+            alert('スタッフ名を選択してください');
+            return;
+        }
+    } else {
+        if (!currentUser) {
+            alert('ログインしてください');
+            return;
+        }
+        staffName = currentUser.name;
+    }
+    
+    console.log('staffName:', staffName);
+    console.log('selectedDates:', selectedDates);
+    
+    if (selectedDates.length === 0) {
+        alert('日付を選択してください');
+        return;
+    }
+    
+    const earlyLeave = document.getElementById('earlyLeave').checked;
+    const lateStart = document.getElementById('lateStart').checked;
+    const workArea = document.getElementById('workArea').value;
+    const hourlyWage = parseInt(document.getElementById('hourlyWage').value) || 0;
+    const memo = document.getElementById('memo').value;
+    const editingId = document.getElementById('editingId').value;
+    
+    console.log('earlyLeave:', earlyLeave, 'lateStart:', lateStart, 'workArea:', workArea);
+    
+    // オプションをメモに追加
+    let fullMemo = memo;
+    const options = [];
+    if (earlyLeave) options.push('早上がり');
+    if (lateStart) options.push('遅出');
+    if (options.length > 0) {
+        fullMemo = options.join(', ') + (memo ? ' / ' + memo : '');
+    }
+    
+    console.log('fullMemo:', fullMemo);
+    
+    const shifts = getShifts();
+    
+    if (editingId) {
+        // 編集モード（単一日付のみ）
+        const index = shifts.findIndex(s => s.id === parseInt(editingId));
+        if (index !== -1) {
+            shifts[index] = {
+                ...shifts[index],
+                staffName,
+                date: selectedDates[0],
+                earlyLeave,
+                lateStart,
+                workArea,
+                hourlyWage,
+                memo: fullMemo
+            };
+        }
+    } else {
+        // 新規登録（複数日付対応）
+        selectedDates.forEach(date => {
+            const shift = {
+                id: Date.now() + Math.random(),
+                staffName,
+                date,
+                earlyLeave,
+                lateStart,
+                workArea,
+                hourlyWage,
+                memo: fullMemo
+            };
+            console.log('新規シフト作成:', shift);
+            shifts.push(shift);
+        });
+    }
+    
+    console.log('保存前のシフト数:', shifts.length);
+    saveShifts(shifts);
+    console.log('シフト保存完了');
+    
+    // フォームをリセット
+    document.getElementById('shiftForm').reset();
+    document.getElementById('editingId').value = '';
+    document.getElementById('submitBtn').textContent = '登録';
+    document.getElementById('cancelBtn').style.display = 'none';
+    selectedDates = [];
+    
+    updateStaffList();
+    displayShifts();
+    updateStats();
+    renderCalendarSelector();
+    displayTodayShift(); // 本日のシフトを更新
+    
+    alert(editingId ? 'シフトを更新しました！' : 'シフトを登録しました！');
+}
+
+// スタッフ一覧を表示
+function displayStaffList() {
+    const staffData = getStaffData();
+    const staffListDiv = document.getElementById('staffList');
+    
+    if (staffData.length === 0) {
+        staffListDiv.innerHTML = '<div class="no-shifts">スタッフが登録されていません</div>';
+        return;
+    }
+    
+    staffListDiv.innerHTML = staffData.map(staff => `
+        <div class="staff-item">
+            <span class="staff-name">👤 ${staff.name}</span>
+            <button onclick="deleteStaff('${staff.name}')" class="btn btn-danger btn-small">削除</button>
+        </div>
+    `).join('');
+}
+
+// スタッフ削除
+function deleteStaff(name) {
+    if (!confirm(`${name}を削除しますか？`)) {
+        return;
+    }
+    
+    let staffData = getStaffData();
+    staffData = staffData.filter(s => s.name !== name);
+    saveStaffData(staffData);
+    
+    displayStaffList();
+    initLoginScreen();
+    updateStaffNameSelect();
+}
+
+// スタッフ名選択を更新
+function updateStaffNameSelect() {
+    const staffData = getStaffData();
+    const staffNameSelect = document.getElementById('staffName');
+    
+    if (staffNameSelect) {
+        staffNameSelect.innerHTML = '<option value="">選択してください</option>' +
+            staffData.map(staff => `<option value="${staff.name}">${staff.name}</option>`).join('');
+    }
+}
+// 設定を取得
+function getSettings() {
+    const data = localStorage.getItem(SETTINGS_KEY);
+    return data ? JSON.parse(data) : {
+        openTime: '09:00',
+        closeTime: '22:00'
+    };
+}
+
+// 設定を保存
+function saveSettings() {
+    const openTimeSelect = document.getElementById('openTime');
+    const closeTimeSelect = document.getElementById('closeTime');
+    
+    if (!openTimeSelect || !closeTimeSelect) return;
+    
+    const settings = {
+        openTime: openTimeSelect.value,
+        closeTime: closeTimeSelect.value
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    initTimeSelects();
+}
+
+// シフトデータを取得
+function getShifts() {
+    const data = localStorage.getItem(STORAGE_KEY);
+    return data ? JSON.parse(data) : [];
+}
+
+// シフトデータを保存
+function saveShifts(shifts) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+}
+
+// 30分単位の時間オプションを生成
+function generateTimeOptions(startHour = 0, endHour = 24, includeEnd = true) {
+    const options = [];
+    for (let h = startHour; h <= endHour; h++) {
+        if (h > endHour) break;
+        
+        const maxMin = (h === endHour && !includeEnd) ? 0 : 60;
+        
+        for (let m = 0; m < maxMin; m += 30) {
+            const hour = String(h).padStart(2, '0');
+            const min = String(m).padStart(2, '0');
+            options.push(`${hour}:${min}`);
+        }
+    }
+    return options;
+}
+
+// 時間選択を初期化
+function initTimeSelects() {
+    const settings = getSettings();
+    const openTime = settings.openTime;
+    const closeTime = settings.closeTime;
+    
+    // 営業時間設定用（0:00から24:00まで）
+    const openSelect = document.getElementById('openTime');
+    const closeSelect = document.getElementById('closeTime');
+    
+    if (!openSelect || !closeSelect) return;
+    
+    const allTimes = generateTimeOptions(0, 24, true);
+    
+    openSelect.innerHTML = allTimes.map(time => 
+        `<option value="${time}" ${time === openTime ? 'selected' : ''}>${time}</option>`
+    ).join('');
+    
+    closeSelect.innerHTML = allTimes.map(time => 
+        `<option value="${time}" ${time === closeTime ? 'selected' : ''}>${time}</option>`
+    ).join('');
+    
+    // シフト入力用（営業時間に基づく）
+    const startSelect = document.getElementById('startTime');
+    const endSelect = document.getElementById('endTime');
+    
+    if (!startSelect || !endSelect) return;
+    
+    const [openH] = openTime.split(':').map(Number);
+    let [closeH] = closeTime.split(':').map(Number);
+    
+    // 閉店時間が24:00の場合
+    if (closeH === 24 || closeTime === '24:00') {
+        closeH = 24;
+    }
+    
+    // 営業時間の範囲で時間を生成（閉店時間+1時間まで）
+    const shiftTimes = generateTimeOptions(openH, Math.min(closeH + 1, 24), true);
+    
+    startSelect.innerHTML = shiftTimes.map(time => 
+        `<option value="${time}">${time}</option>`
+    ).join('');
+    
+    endSelect.innerHTML = shiftTimes.map(time => 
+        `<option value="${time}">${time}</option>`
+    ).join('');
+}
+
+// 勤務時間を計算（時間単位）
+function calculateHours(startTime, endTime) {
+    const [startHour, startMin] = startTime.split(':').map(Number);
+    let [endHour, endMin] = endTime.split(':').map(Number);
+    
+    // 24:00の場合
+    if (endHour === 24) {
+        endHour = 0;
+        endMin = 0;
+    }
+    
+    const startMinutes = startHour * 60 + startMin;
+    let endMinutes = endHour * 60 + endMin;
+    
+    // 日をまたぐ場合
+    if (endMinutes <= startMinutes) {
+        endMinutes += 24 * 60;
+    }
+    
+    return (endMinutes - startMinutes) / 60;
+}
+
+// 給与を計算
+function calculateWage(hours, hourlyWage) {
+    return Math.floor(hours * hourlyWage);
+}
+
+// 日付をフォーマット
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const days = ['日', '月', '火', '水', '木', '金', '土'];
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const dayOfWeek = days[date.getDay()];
+    
+    return `${year}年${month}月${day}日（${dayOfWeek}）`;
+}
+
+// スタッフ名リストを更新
+function updateStaffList() {
+    const shifts = getShifts();
+    const staffNames = [...new Set(shifts.map(s => s.staffName))];
+    
+    const filterSelect = document.getElementById('filterStaff');
+    
+    // 管理者のみフィルター表示
+    if (isAdminMode) {
+        filterSelect.innerHTML = '<option value="">全スタッフ</option>' + 
+            staffNames.map(name => 
+                `<option value="${name}">${name}</option>`
+            ).join('');
+        filterSelect.parentElement.style.display = 'flex';
+    } else {
+        // スタッフモードではフィルターを非表示
+        filterSelect.parentElement.style.display = 'none';
+    }
+}
+
+// 管理者UIの更新
+function updateAdminUI() {
+    const hourlyWageGroup = document.getElementById('hourlyWageGroup');
+    const staffManagement = document.getElementById('staffManagement');
+    const timeSettings = document.getElementById('timeSettings');
+    const staffNameGroup = document.getElementById('staffNameGroup');
+    const staffNameSelect = document.getElementById('staffName');
+    const timeInputGroup = document.getElementById('timeInputGroup');
+    const timeInputGroup2 = document.getElementById('timeInputGroup2');
+    
+    if (isAdminMode) {
+        // 管理者モード：すべての機能を表示
+        if (hourlyWageGroup) hourlyWageGroup.style.display = 'block';
+        if (staffManagement) staffManagement.style.display = 'block';
+        if (timeSettings) timeSettings.style.display = 'block';
+        if (staffNameGroup) staffNameGroup.style.display = 'block';
+        if (staffNameSelect) staffNameSelect.required = true;
+        if (timeInputGroup) timeInputGroup.style.display = 'block';
+        if (timeInputGroup2) timeInputGroup2.style.display = 'block';
+        displayStaffList();
+    } else {
+        // スタッフモード：管理者専用機能を非表示
+        if (hourlyWageGroup) hourlyWageGroup.style.display = 'none';
+        if (staffManagement) staffManagement.style.display = 'none';
+        if (timeSettings) timeSettings.style.display = 'none';
+        if (staffNameGroup) staffNameGroup.style.display = 'none';
+        if (staffNameSelect) staffNameSelect.required = false; // スタッフモードではrequiredを解除
+        if (timeInputGroup) timeInputGroup.style.display = 'none';
+        if (timeInputGroup2) timeInputGroup2.style.display = 'none';
+    }
+}
+
+// メイン画面の初期化
+function initMainScreen() {
+    initForm();
+    updateStaffNameSelect();
+    updateStaffList();
+    displayShifts();
+    updateStats();
+    updateMessageRecipients();
+    loadLastReadTime();
+    updateMessageBadge();
+    displayMessages();
+    displayTodayShift();
+    switchPage('shift'); // 初期表示はシフトページ
+}
+
+// ページ切り替え
+function switchPage(page) {
+    currentPage = page;
+    
+    const shiftPage = document.getElementById('shiftPage');
+    const todayPage = document.getElementById('todayPage');
+    const messagePage = document.getElementById('messagePage');
+    const shiftNavBtn = document.getElementById('shiftNavBtn');
+    const todayNavBtn = document.getElementById('todayNavBtn');
+    const messageNavBtn = document.getElementById('messageNavBtn');
+    
+    // 要素が存在しない場合は処理を中断
+    if (!shiftPage || !todayPage || !messagePage || !shiftNavBtn || !todayNavBtn || !messageNavBtn) {
+        console.error('ページ要素が見つかりません');
+        return;
+    }
+    
+    // すべてのページを非表示
+    shiftPage.style.display = 'none';
+    todayPage.style.display = 'none';
+    messagePage.style.display = 'none';
+    
+    // すべてのボタンを非アクティブ
+    shiftNavBtn.classList.remove('active');
+    todayNavBtn.classList.remove('active');
+    messageNavBtn.classList.remove('active');
+    
+    if (page === 'shift') {
+        shiftPage.style.display = 'block';
+        shiftNavBtn.classList.add('active');
+    } else if (page === 'today') {
+        todayPage.style.display = 'block';
+        todayNavBtn.classList.add('active');
+        displayTodayShift(); // 本日のシフトを更新
+    } else if (page === 'message') {
+        messagePage.style.display = 'block';
+        messageNavBtn.classList.add('active');
+        
+        // メッセージページを開いたら既読にする
+        saveLastReadTime();
+        updateMessageBadge();
+    }
+}
+
+// 表示切り替え
+function switchView(view) {
+    currentView = view;
+    document.getElementById('listViewBtn').classList.toggle('active', view === 'list');
+    document.getElementById('calendarViewBtn').classList.toggle('active', view === 'calendar');
+    document.getElementById('shiftList').style.display = view === 'list' ? 'block' : 'none';
+    document.getElementById('calendarView').style.display = view === 'calendar' ? 'block' : 'none';
+    
+    if (view === 'calendar') {
+        displayCalendarView();
+    } else {
+        displayShifts();
+    }
+}
+
+// フォームの初期化
+function initForm() {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    document.getElementById('filterMonth').value = currentMonth;
+    
+    initTimeSelects();
+    renderCalendarSelector();
+}
+
+// 日本の祝日を判定
+function isJapaneseHoliday(year, month, day) {
+    // 月は0始まりではなく1始まり
+    const holidays = {
+        '1-1': '元日',
+        '1-2': '振替休日', // 2024年以降の例
+        '2-11': '建国記念の日',
+        '2-23': '天皇誕生日',
+        '3-20': '春分の日', // 年によって変動
+        '3-21': '春分の日', // 年によって変動
+        '4-29': '昭和の日',
+        '5-3': '憲法記念日',
+        '5-4': 'みどりの日',
+        '5-5': 'こどもの日',
+        '7-15': '海の日', // 第3月曜日（簡易版）
+        '8-11': '山の日',
+        '9-16': '敬老の日', // 第3月曜日（簡易版）
+        '9-22': '秋分の日', // 年によって変動
+        '9-23': '秋分の日', // 年によって変動
+        '10-14': 'スポーツの日', // 第2月曜日（簡易版）
+        '11-3': '文化の日',
+        '11-23': '勤労感謝の日'
+    };
+    
+    const key = `${month}-${day}`;
+    return holidays[key] !== undefined;
+}
+
+// カレンダーセレクターを描画
+function renderCalendarSelector() {
+    const year = currentCalendarMonth.getFullYear();
+    const month = currentCalendarMonth.getMonth();
+    
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const prevLastDay = new Date(year, month, 0);
+    
+    const firstDayOfWeek = firstDay.getDay();
+    const lastDate = lastDay.getDate();
+    const prevLastDate = prevLastDay.getDate();
+    
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    // 既存のシフトを取得
+    const shifts = getShifts();
+    let staffName = '';
+    
+    if (isAdminMode) {
+        const staffNameSelect = document.getElementById('staffName');
+        staffName = staffNameSelect ? staffNameSelect.value : '';
+    } else {
+        staffName = currentUser ? currentUser.name : '';
+    }
+    
+    const shiftDates = new Set(
+        shifts
+            .filter(s => s.staffName === staffName)
+            .map(s => s.date)
+    );
+    
+    let html = `
+        <div class="calendar-header">
+            <button type="button" onclick="changeCalendarMonth(-1)">◀</button>
+            <h3>${year}年 ${month + 1}月</h3>
+            <button type="button" onclick="changeCalendarMonth(1)">▶</button>
+        </div>
+        <div class="calendar-weekdays">
+            <div class="calendar-weekday">日</div>
+            <div class="calendar-weekday">月</div>
+            <div class="calendar-weekday">火</div>
+            <div class="calendar-weekday">水</div>
+            <div class="calendar-weekday">木</div>
+            <div class="calendar-weekday">金</div>
+            <div class="calendar-weekday">土</div>
+        </div>
+        <div class="calendar-days">
+    `;
+    
+    // 前月の日付
+    for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+        const day = prevLastDate - i;
+        html += `<div class="calendar-day-cell other-month">${day}</div>`;
+    }
+    
+    // 当月の日付
+    for (let day = 1; day <= lastDate; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const currentDate = new Date(year, month, day);
+        const dayOfWeek = currentDate.getDay(); // 0=日曜, 6=土曜
+        const isToday = dateStr === todayStr;
+        const isSelected = selectedDates.includes(dateStr);
+        const hasShift = shiftDates.has(dateStr);
+        const isHoliday = isJapaneseHoliday(year, month + 1, day);
+        
+        const classes = ['calendar-day-cell'];
+        if (isToday) classes.push('today');
+        if (isSelected) classes.push('selected');
+        if (hasShift) classes.push('has-shift');
+        if (dayOfWeek === 0) classes.push('sunday'); // 日曜日
+        if (dayOfWeek === 6) classes.push('saturday'); // 土曜日
+        if (isHoliday) classes.push('holiday'); // 祝日
+        
+        html += `<div class="${classes.join(' ')}" onclick="toggleDateSelection('${dateStr}')">${day}</div>`;
+    }
+    
+    // 次月の日付
+    const remainingCells = 42 - (firstDayOfWeek + lastDate);
+    for (let day = 1; day <= remainingCells; day++) {
+        html += `<div class="calendar-day-cell other-month">${day}</div>`;
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('calendarSelector').innerHTML = html;
+    updateSelectedDatesDisplay();
+}
+
+// カレンダーの月を変更
+function changeCalendarMonth(delta) {
+    currentCalendarMonth.setMonth(currentCalendarMonth.getMonth() + delta);
+    renderCalendarSelector();
+}
+
+// 日付選択をトグル
+function toggleDateSelection(dateStr) {
+    const index = selectedDates.indexOf(dateStr);
+    if (index > -1) {
+        // 既に選択されている場合は選択解除
+        selectedDates.splice(index, 1);
+    } else {
+        // 新規選択の場合、重複チェック
+        const shifts = getShifts();
+        let staffName;
+        
+        // スタッフ名を取得
+        if (isAdminMode) {
+            const staffNameSelect = document.getElementById('staffName');
+            staffName = staffNameSelect ? staffNameSelect.value : '';
+        } else {
+            staffName = currentUser ? currentUser.name : '';
+        }
+        
+        if (!staffName) {
+            // スタッフ名が未選択の場合は、重複チェックをスキップして選択を許可
+            selectedDates.push(dateStr);
+            renderCalendarSelector();
+            return;
+        }
+        
+        // 同じスタッフが同じ日に既にシフト登録しているかチェック
+        const isDuplicate = shifts.some(shift => 
+            shift.staffName === staffName && shift.date === dateStr
+        );
+        
+        if (isDuplicate) {
+            alert(`${dateStr} は既に登録されています。\n重複登録はできません。`);
+            return;
+        }
+        
+        selectedDates.push(dateStr);
+    }
+    renderCalendarSelector();
+}
+
+// 選択された日付の表示を更新
+function updateSelectedDatesDisplay() {
+    const display = document.getElementById('selectedDatesDisplay');
+    if (selectedDates.length === 0) {
+        display.textContent = '選択された日付: なし';
+    } else {
+        const sortedDates = [...selectedDates].sort();
+        display.textContent = `選択された日付: ${sortedDates.map(d => {
+            const date = new Date(d);
+            return `${date.getMonth() + 1}/${date.getDate()}`;
+        }).join(', ')}`;
+    }
+}
+
+// シフト編集
+function editShift(id) {
+    const shifts = getShifts();
+    const shift = shifts.find(s => s.id === id);
+    
+    if (!shift) return;
+    
+    if (isAdminMode) {
+        document.getElementById('staffName').value = shift.staffName;
+    }
+    
+    // 単一日付を選択
+    selectedDates = [shift.date];
+    renderCalendarSelector();
+    
+    document.getElementById('earlyLeave').checked = shift.earlyLeave || false;
+    document.getElementById('lateStart').checked = shift.lateStart || false;
+    
+    if (isAdminMode) {
+        document.getElementById('hourlyWage').value = shift.hourlyWage || '';
+    }
+    
+    // メモからオプションを除去
+    let cleanMemo = shift.memo || '';
+    if (cleanMemo.includes('早上がり') || cleanMemo.includes('遅出')) {
+        const parts = cleanMemo.split(' / ');
+        cleanMemo = parts.length > 1 ? parts[1] : '';
+    }
+    document.getElementById('memo').value = cleanMemo;
+    
+    document.getElementById('editingId').value = shift.id;
+    document.getElementById('submitBtn').textContent = '更新';
+    document.getElementById('cancelBtn').style.display = 'inline-block';
+    
+    // フォームまでスクロール
+    document.querySelector('.input-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+// 編集キャンセル
+function cancelEdit() {
+    document.getElementById('shiftForm').reset();
+    document.getElementById('editingId').value = '';
+    document.getElementById('submitBtn').textContent = '登録';
+    document.getElementById('cancelBtn').style.display = 'none';
+    selectedDates = [];
+    renderCalendarSelector();
+}
+
+// シフト削除
+function deleteShift(id) {
+    const shifts = getShifts();
+    const shift = shifts.find(s => s.id === id);
+    
+    if (!shift) {
+        alert('シフトが見つかりません');
+        return;
+    }
+    
+    // スタッフモードの場合、自分のシフトのみ削除可能
+    if (!isAdminMode && currentUser && shift.staffName !== currentUser.name) {
+        alert('自分のシフトのみ削除できます');
+        return;
+    }
+    
+    if (!confirm('このシフトを削除しますか？')) {
+        return;
+    }
+    
+    const updatedShifts = shifts.filter(s => s.id !== id);
+    saveShifts(updatedShifts);
+    
+    updateStaffList();
+    displayShifts();
+    updateStats();
+    displayTodayShift(); // 本日のシフトを更新
+    renderCalendarSelector(); // カレンダーを更新
+    alert('シフトを削除しました');
+}
+
+// シフト一覧を表示
+function displayShifts(filterMonth = null, filterStaff = null) {
+    const shifts = getShifts();
+    const shiftList = document.getElementById('shiftList');
+    
+    let filteredShifts = shifts;
+    
+    // スタッフモードの場合は自分のシフトのみ表示
+    if (!isAdminMode && currentUser) {
+        filteredShifts = filteredShifts.filter(shift => shift.staffName === currentUser.name);
+    }
+    
+    if (filterMonth) {
+        filteredShifts = filteredShifts.filter(shift => shift.date.startsWith(filterMonth));
+    }
+    
+    if (filterStaff) {
+        filteredShifts = filteredShifts.filter(shift => shift.staffName === filterStaff);
+    }
+    
+    // 日付の新しい順にソート
+    filteredShifts.sort((a, b) => {
+        const dateCompare = new Date(b.date) - new Date(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return a.startTime ? a.startTime.localeCompare(b.startTime) : 0;
+    });
+    
+    if (filteredShifts.length === 0) {
+        shiftList.innerHTML = '<div class="no-shifts">シフトが登録されていません</div>';
+        return;
+    }
+    
+    // 管理者モードの場合は日付ごとにグループ化
+    if (isAdminMode) {
+        const shiftsByDate = {};
+        filteredShifts.forEach(shift => {
+            if (!shiftsByDate[shift.date]) {
+                shiftsByDate[shift.date] = [];
+            }
+            shiftsByDate[shift.date].push(shift);
+        });
+        
+        const sortedDates = Object.keys(shiftsByDate).sort((a, b) => new Date(b) - new Date(a));
+        
+        shiftList.innerHTML = sortedDates.map(date => {
+            const dayShifts = shiftsByDate[date];
+            return `
+                <div class="shift-group">
+                    <div class="shift-group-header">${formatDate(date)}</div>
+                    <div class="shift-group-items">
+                        ${dayShifts.map(shift => `
+                            <div class="shift-group-item">
+                                <div class="shift-group-staff">👤 ${shift.staffName}</div>
+                                <div class="shift-group-details">
+                                    ${shift.memo ? `📝 ${shift.memo}` : ''}
+                                    ${shift.hourlyWage > 0 ? `<br>💰 時給 ¥${shift.hourlyWage.toLocaleString()}` : ''}
+                                </div>
+                                <div class="shift-actions" style="margin-top: 8px;">
+                                    <button onclick="editShift(${shift.id})" class="btn btn-edit btn-small">編集</button>
+                                    <button onclick="deleteShift(${shift.id})" class="btn btn-danger btn-small">削除</button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } else {
+        // スタッフモードは従来通り
+        shiftList.innerHTML = filteredShifts.map(shift => `
+            <div class="shift-item">
+                <div class="shift-header">
+                    <div>
+                        <div class="shift-date">${formatDate(shift.date)}</div>
+                    </div>
+                </div>
+                <div class="shift-details">
+                    ${shift.memo ? `<div>📝 ${shift.memo}</div>` : ''}
+                </div>
+                <div class="shift-actions" style="margin-top: 8px;">
+                    <button onclick="deleteShift(${shift.id})" class="btn btn-danger btn-small">取り消し</button>
+                </div>
+            </div>
+        `).join('');
+    }
+}
+
+// カレンダー表示
+function displayCalendarView() {
+    const shifts = getShifts();
+    const calendarView = document.getElementById('calendarView');
+    const settings = getSettings();
+    
+    const filterMonth = document.getElementById('filterMonth').value;
+    const filterStaff = document.getElementById('filterStaff').value;
+    
+    let filteredShifts = shifts;
+    
+    // スタッフモードの場合は自分のシフトのみ表示
+    if (!isAdminMode && currentUser) {
+        filteredShifts = filteredShifts.filter(shift => shift.staffName === currentUser.name);
+    }
+    
+    if (filterMonth) {
+        filteredShifts = filteredShifts.filter(shift => shift.date.startsWith(filterMonth));
+    }
+    
+    if (filterStaff) {
+        filteredShifts = filteredShifts.filter(shift => shift.staffName === filterStaff);
+    }
+    
+    // 日付ごとにグループ化
+    const shiftsByDate = {};
+    filteredShifts.forEach(shift => {
+        if (!shiftsByDate[shift.date]) {
+            shiftsByDate[shift.date] = [];
+        }
+        shiftsByDate[shift.date].push(shift);
+    });
+    
+    // 日付順にソート
+    const sortedDates = Object.keys(shiftsByDate).sort((a, b) => new Date(b) - new Date(a));
+    
+    if (sortedDates.length === 0) {
+        calendarView.innerHTML = '<div class="no-shifts">シフトが登録されていません</div>';
+        return;
+    }
+    
+    calendarView.innerHTML = sortedDates.map(date => {
+        const dayShifts = shiftsByDate[date].sort((a, b) => a.startTime ? a.startTime.localeCompare(b.startTime) : 0);
+        
+        return `
+            <div class="calendar-day">
+                <div class="calendar-day-header">
+                    ${formatDate(date)}
+                    <span class="business-hours">営業時間: ${settings.openTime} - ${settings.closeTime}</span>
+                </div>
+                ${dayShifts.map(shift => {
+                    const hasConflict = checkTimeConflict(shift, dayShifts);
+                    return `
+                        <div class="calendar-shift ${hasConflict ? 'time-conflict' : ''}">
+                            ${isAdminMode ? `<span class="calendar-shift-name">${shift.staffName}</span>` : ''}
+                            ${shift.memo ? `<span class="calendar-shift-time">${shift.memo}</span>` : ''}
+                            ${hasConflict ? ' ⚠️ 重複' : ''}
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    }).join('');
+}
+
+// 時間の重複チェック（同じスタッフが同じ日に複数シフト）
+function checkTimeConflict(shift, dayShifts) {
+    return dayShifts.some(other => {
+        if (other.id === shift.id) return false;
+        return other.staffName === shift.staffName;
+    });
+}
+
+// 統計情報を更新
+function updateStats() {
+    const shifts = getShifts();
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    
+    let monthlyShifts = shifts.filter(shift => shift.date.startsWith(currentMonth));
+    
+    // スタッフモードの場合は自分のシフトのみ集計
+    if (!isAdminMode && currentUser) {
+        monthlyShifts = monthlyShifts.filter(shift => shift.staffName === currentUser.name);
+    } else if (isAdminMode) {
+        // 管理者モードでフィルターが選択されている場合
+        const filterStaff = document.getElementById('filterStaff').value;
+        if (filterStaff) {
+            monthlyShifts = monthlyShifts.filter(shift => shift.staffName === filterStaff);
+        }
+    }
+    
+    const totalDays = monthlyShifts.length;
+    const totalSalary = monthlyShifts.reduce((sum, shift) => sum + (shift.hourlyWage || 0), 0);
+    
+    document.getElementById('monthlyHours').textContent = `${totalDays}日`;
+    document.getElementById('monthlySalary').textContent = `¥${totalSalary.toLocaleString()}`;
+}
+
+// フィルター適用
+function applyFilters() {
+    const filterMonth = document.getElementById('filterMonth').value;
+    const filterStaff = document.getElementById('filterStaff').value;
+    
+    if (currentView === 'calendar') {
+        displayCalendarView();
+    } else {
+        displayShifts(filterMonth, filterStaff);
+    }
+    updateStats();
+}
+
+// フィルタークリア
+function clearFilter() {
+    document.getElementById('filterMonth').value = new Date().toISOString().slice(0, 7);
+    document.getElementById('filterStaff').value = '';
+    applyFilters();
+}
+
+// メッセージ機能
+
+// メッセージデータを取得
+function getMessages() {
+    const data = localStorage.getItem(MESSAGE_KEY);
+    return data ? JSON.parse(data) : [];
+}
+
+// メッセージデータを保存
+function saveMessages(messages) {
+    localStorage.setItem(MESSAGE_KEY, JSON.stringify(messages));
+}
+
+// 削除済みメッセージIDを取得
+function getDeletedMessageIds() {
+    if (!currentUser) return [];
+    const key = `deletedMessages_${currentUser.name}`;
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : [];
+}
+
+// 削除済みメッセージIDを保存
+function saveDeletedMessageIds(ids) {
+    if (!currentUser) return;
+    const key = `deletedMessages_${currentUser.name}`;
+    localStorage.setItem(key, JSON.stringify(ids));
+}
+
+// メッセージを削除（自分の表示から消すだけ）
+function deleteMessage(messageId) {
+    if (!currentUser) return;
+    
+    if (!confirm('このメッセージを削除しますか？')) {
+        return;
+    }
+    
+    const deletedIds = getDeletedMessageIds();
+    if (!deletedIds.includes(messageId)) {
+        deletedIds.push(messageId);
+        saveDeletedMessageIds(deletedIds);
+    }
+    
+    displayMessages();
+    alert('メッセージを削除しました');
+}
+
+// 最終既読時刻を保存
+function saveLastReadTime() {
+    if (!currentUser) return;
+    const key = `${LAST_READ_KEY}_${currentUser.name}`;
+    localStorage.setItem(key, new Date().toISOString());
+    lastReadMessageTime = new Date().toISOString();
+}
+
+// 最終既読時刻を読み込み
+function loadLastReadTime() {
+    if (!currentUser) return;
+    const key = `${LAST_READ_KEY}_${currentUser.name}`;
+    lastReadMessageTime = localStorage.getItem(key);
+}
+
+// 未読メッセージ数を取得
+function getUnreadMessageCount() {
+    if (!currentUser) return 0;
+    
+    const messages = getMessages();
+    const filteredMessages = messages.filter(msg => {
+        if (msg.from === currentUser.name) return false; // 自分が送信したメッセージは除外
+        if (msg.to === '全員') return true;
+        if (msg.to === currentUser.name) return true;
+        if (isAdminMode && msg.to === '店長') return true;
+        return false;
+    });
+    
+    if (!lastReadMessageTime) return filteredMessages.length;
+    
+    const unreadMessages = filteredMessages.filter(msg => 
+        new Date(msg.timestamp) > new Date(lastReadMessageTime)
+    );
+    
+    return unreadMessages.length;
+}
+
+// メッセージバッジを更新
+function updateMessageBadge() {
+    const badge = document.getElementById('messageBadge');
+    if (!badge) return;
+    
+    const unreadCount = getUnreadMessageCount();
+    
+    if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.style.display = 'inline-block';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// メッセージ送信先を更新
+function updateMessageRecipients() {
+    const staffData = getStaffData();
+    const messageTo = document.getElementById('messageTo');
+    
+    console.log('updateMessageRecipients called');
+    console.log('messageTo element:', messageTo);
+    console.log('currentUser:', currentUser);
+    console.log('isAdminMode:', isAdminMode);
+    
+    if (!messageTo) {
+        console.error('messageTo element not found!');
+        return;
+    }
+    
+    let options = '<option value="">送信先を選択</option>';
+    options += '<option value="全員">全員</option>';
+    
+    if (isAdminMode) {
+        options += '<option value="店長">店長</option>';
+    }
+    
+    staffData.forEach(staff => {
+        if (!currentUser || staff.name !== currentUser.name) {
+            options += `<option value="${staff.name}">${staff.name}</option>`;
+        }
+    });
+    
+    messageTo.innerHTML = options;
+    console.log('Recipients updated:', messageTo.innerHTML);
+}
+
+// メッセージ送信
+function handleMessageSubmit(e) {
+    e.preventDefault();
+    
+    if (!currentUser) {
+        alert('ログインしてください');
+        return;
+    }
+    
+    const to = document.getElementById('messageTo').value;
+    const text = document.getElementById('messageText').value.trim();
+    
+    if (!to || !text) {
+        alert('送信先とメッセージを入力してください');
+        return;
+    }
+    
+    const messages = getMessages();
+    const message = {
+        id: Date.now(),
+        from: currentUser.name,
+        to: to,
+        text: text,
+        timestamp: new Date().toISOString(),
+        acknowledged: false,
+        acknowledgedBy: []
+    };
+    
+    messages.push(message);
+    saveMessages(messages);
+    
+    document.getElementById('messageText').value = '';
+    document.getElementById('messageTo').value = '';
+    
+    displayMessages();
+    updateMessageBadge();
+    alert('メッセージを送信しました！');
+}
+
+// メッセージに承知しましたを追加
+function acknowledgeMessage(messageId) {
+    if (!currentUser) return;
+    
+    const messages = getMessages();
+    const message = messages.find(m => m.id === messageId);
+    
+    if (!message) return;
+    
+    // 既に承知済みかチェック
+    if (!message.acknowledgedBy) {
+        message.acknowledgedBy = [];
+    }
+    
+    if (message.acknowledgedBy.includes(currentUser.name)) {
+        alert('既に承知済みです');
+        return;
+    }
+    
+    message.acknowledgedBy.push(currentUser.name);
+    message.acknowledged = true;
+    
+    saveMessages(messages);
+    displayMessages();
+    alert('承知しました！');
+}
+
+// メッセージ表示
+function displayMessages() {
+    const messages = getMessages();
+    const messageList = document.getElementById('messageList');
+    
+    if (!currentUser) return;
+    
+    // 削除済みメッセージIDを取得
+    const deletedIds = getDeletedMessageIds();
+    
+    // 自分宛のメッセージまたは自分が送信したメッセージをフィルター
+    let filteredMessages = messages.filter(msg => {
+        // 削除済みメッセージを除外
+        if (deletedIds.includes(msg.id)) return false;
+        
+        if (msg.to === '全員') return true;
+        if (msg.to === currentUser.name) return true;
+        if (msg.from === currentUser.name) return true;
+        if (isAdminMode && msg.to === '店長') return true;
+        return false;
+    });
+    
+    // 新しい順にソート
+    filteredMessages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    if (filteredMessages.length === 0) {
+        messageList.innerHTML = '<div class="no-messages">メッセージがありません</div>';
+        return;
+    }
+    
+    messageList.innerHTML = filteredMessages.map(msg => {
+        const date = new Date(msg.timestamp);
+        const timeStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        
+        const isReceived = msg.from !== currentUser.name;
+        const hasAcknowledged = msg.acknowledgedBy && msg.acknowledgedBy.includes(currentUser.name);
+        const acknowledgedList = msg.acknowledgedBy && msg.acknowledgedBy.length > 0 
+            ? msg.acknowledgedBy.join(', ') 
+            : '';
+        
+        return `
+            <div class="message-item ${msg.acknowledged ? 'message-acknowledged' : ''}">
+                <div class="message-header">
+                    <div>
+                        <span class="message-from">${msg.from}</span>
+                        <span class="message-to">→ ${msg.to}</span>
+                    </div>
+                    <div>
+                        <span class="message-time">${timeStr}</span>
+                        <button onclick="deleteMessage(${msg.id})" class="btn-delete-message" title="削除">🗑️</button>
+                    </div>
+                </div>
+                <div class="message-text">${msg.text}</div>
+                ${isReceived && !hasAcknowledged ? `
+                    <div class="message-actions">
+                        <button onclick="acknowledgeMessage(${msg.id})" class="btn-acknowledge">
+                            ✓ 承知しました
+                        </button>
+                    </div>
+                ` : ''}
+                ${hasAcknowledged ? `
+                    <div class="acknowledged-text">✓ 承知済み</div>
+                ` : ''}
+                ${acknowledgedList && msg.from === currentUser.name ? `
+                    <div class="acknowledged-text">✓ 承知: ${acknowledgedList}</div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+
+// 担当エリアを更新
+function updateWorkArea(shiftId, newWorkArea) {
+    const shifts = getShifts();
+    const shift = shifts.find(s => s.id === shiftId);
+    
+    if (!shift) {
+        alert('シフトが見つかりません');
+        return;
+    }
+    
+    shift.workArea = newWorkArea;
+    saveShifts(shifts);
+    displayTodayShift();
+    alert('担当エリアを更新しました');
+}
+
+// 本日のシフトを表示
+function displayTodayShift() {
+    const todayShiftList = document.getElementById('todayShiftList');
+    
+    if (!currentUser || !todayShiftList) return;
+    
+    const shifts = getShifts();
+    const today = new Date().toISOString().split('T')[0];
+    
+    // 本日のシフトを取得
+    const todayShifts = shifts.filter(shift => shift.date === today);
+    
+    // スタッフモードの場合、自分がシフトに入っているかチェック
+    if (!isAdminMode) {
+        const myShift = todayShifts.find(shift => shift.staffName === currentUser.name);
+        
+        if (!myShift) {
+            // 自分がシフトに入っていない場合
+            todayShiftList.innerHTML = `
+                <div class="today-shift-container">
+                    <div class="no-today-shift">本日はシフトに入っていません</div>
+                </div>
+            `;
+            return;
+        }
+    }
+    
+    if (todayShifts.length === 0) {
+        todayShiftList.innerHTML = `
+            <div class="today-shift-container">
+                <div class="no-today-shift">本日のシフトはありません</div>
+            </div>
+        `;
+        return;
+    }
+    
+    // スタッフ名でソート
+    todayShifts.sort((a, b) => a.staffName.localeCompare(b.staffName));
+    
+    const date = new Date(today);
+    const dateStr = `${date.getMonth() + 1}月${date.getDate()}日（${['日', '月', '火', '水', '木', '金', '土'][date.getDay()]}）`;
+    
+    todayShiftList.innerHTML = `
+        <div class="today-shift-container">
+            <div class="today-shift-header">📅 ${dateStr} の勤務メンバー</div>
+            <div class="today-shift-staff-list">
+                ${todayShifts.map(shift => {
+                    const isCurrentUser = shift.staffName === currentUser.name;
+                    const workArea = shift.workArea || '通常勤務';
+                    return `
+                        <div class="today-shift-staff ${isCurrentUser ? 'current-user' : ''}">
+                            <div class="today-shift-name">
+                                👤 ${shift.staffName}
+                                ${isCurrentUser ? '<span class="today-shift-you">あなた</span>' : ''}
+                            </div>
+                            <div class="today-shift-details">
+                                <div class="work-area-selector">
+                                    <label>📍 担当エリア:</label>
+                                    <select onchange="updateWorkArea(${shift.id}, this.value)" class="work-area-select">
+                                        <option value="通常勤務" ${workArea === '通常勤務' ? 'selected' : ''}>通常勤務</option>
+                                        <option value="ソフト" ${workArea === 'ソフト' ? 'selected' : ''}>ソフト</option>
+                                        <option value="アドベン" ${workArea === 'アドベン' ? 'selected' : ''}>アドベン</option>
+                                        <option value="でんぶん" ${workArea === 'でんぶん' ? 'selected' : ''}>でんぶん</option>
+                                        <option value="バルーン" ${workArea === 'バルーン' ? 'selected' : ''}>バルーン</option>
+                                    </select>
+                                </div>
+                                ${shift.memo ? `<div class="shift-memo">${shift.memo}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+}
