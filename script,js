@@ -1,9 +1,10 @@
+// ローカルストレージのキー
 const STORAGE_KEY = 'shifts';
 const SETTINGS_KEY = 'shiftSettings';
 const STAFF_KEY = 'staffData';
 const MESSAGE_KEY = 'messages';
 const LAST_READ_KEY = 'lastReadMessage';
-const ADMIN_PASSWORD = 'tannge';
+const ADMIN_PASSWORD = '110022';
 
 let isAdminMode = false;
 let currentView = 'list';
@@ -1402,3 +1403,4 @@ function displayTodayShift() {
         </div>
     `;
 }
+
