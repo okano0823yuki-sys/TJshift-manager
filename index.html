@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シフト管理アプリ</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- ログイン画面 -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-container">
+            <h1>🗓️ シフト管理システム</h1>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="loginName">名前</label>
+                    <select id="loginName" required>
+                        <option value="">選択してください</option>
+                        <option value="店長">店長</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="loginPassword">パスワード</label>
+                    <input type="password" id="loginPassword" required placeholder="パスワードを入力">
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="loginAsAdmin">
+                        管理者としてログイン
+                    </label>
+                </div>
+                
+                <button type="submit" class="btn btn-primary">ログイン</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- メイン画面 -->
+    <div id="mainScreen" class="container" style="display:none;">
+        <header>
+            <h1>🗓️ シフト管理</h1>
+            <div class="user-info">
+                <span id="currentUser"></span>
+                <button onclick="logout()" class="btn btn-secondary btn-small">ログアウト</button>
+            </div>
+        </header>
+
+        <!-- ページ切り替えナビゲーション -->
+        <div class="page-navigation">
+            <button onclick="switchPage('shift')" class="btn btn-nav active" id="shiftNavBtn">
+                📅 シフト管理
+            </button>
+            <button onclick="switchPage('today')" class="btn btn-nav" id="todayNavBtn">
+                👥 本日のシフト
+            </button>
+            <button onclick="switchPage('message')" class="btn btn-nav" id="messageNavBtn">
+                💬 メッセージ
+                <span class="notification-badge" id="messageBadge" style="display:none;">0</span>
+            </button>
+        </div>
+
+        <!-- シフト管理ページ -->
+        <div id="shiftPage" class="page-content">
+            <!-- 管理者専用：スタッフ管理 -->
+            <div class="settings-section" id="staffManagement" style="display:none;">
+                <h2>👥 スタッフ管理</h2>
+                <form id="staffForm">
+                    <div class="settings-form">
+                        <div class="form-group">
+                            <label for="newStaffName">スタッフ名</label>
+                            <input type="text" id="newStaffName" required placeholder="山田太郎">
+                        </div>
+                        <div class="form-group">
+                            <label for="newStaffPassword">パスワード</label>
+                            <input type="password" id="newStaffPassword" required placeholder="パスワード">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">スタッフ登録</button>
+                </form>
+                
+                <h3 style="margin-top: 20px;">登録済みスタッフ</h3>
+                <div id="staffList"></div>
+            </div>
+
+            <!-- 管理者専用：営業時間設定 -->
+            <div class="settings-section" id="timeSettings" style="display:none;">
+                <h2>⚙️ 営業時間設定</h2>
+                <div class="settings-form">
+                    <div class="form-group">
+                        <label for="openTime">開店時間</label>
+                        <select id="openTime" onchange="saveSettings()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="closeTime">閉店時間</label>
+                        <select id="closeTime" onchange="saveSettings()"></select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-section">
+                <h2>シフト登録</h2>
+                <form id="shiftForm">
+                    <div class="form-group" id="staffNameGroup" style="display:none;">
+                        <label for="staffName">名前 <span class="required">*</span></label>
+                        <select id="staffName">
+                            <option value="">選択してください</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>日付選択 <span class="required">*</span></label>
+                        <div class="calendar-selector" id="calendarSelector"></div>
+                        <div class="selected-dates-display" id="selectedDatesDisplay">
+                            選択された日付: なし
+                        </div>
+                    </div>
+                    
+                    <div class="form-group" id="timeInputGroup" style="display:none;">
+                        <label for="startTime">開始時間 <span class="required">*</span></label>
+                        <select id="startTime" required></select>
+                    </div>
+                    
+                    <div class="form-group" id="timeInputGroup2" style="display:none;">
+                        <label for="endTime">終了時間 <span class="required">*</span></label>
+                        <select id="endTime" required></select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>オプション</label>
+                        <div class="checkbox-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="earlyLeave" value="早上がり">
+                                早上がり
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="lateStart" value="遅出">
+                                遅出
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="workArea">担当エリア</label>
+                        <select id="workArea">
+                            <option value="通常勤務">通常勤務</option>
+                            <option value="ソフト">ソフト</option>
+                            <option value="アドベン">アドベン</option>
+                            <option value="でんぶん">でんぶん</option>
+                            <option value="バルーン">バルーン</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" id="hourlyWageGroup" style="display:none;">
+                        <label for="hourlyWage">時給（円）</label>
+                        <input type="number" id="hourlyWage" min="0" step="1" placeholder="1000">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="memo">メモ</label>
+                        <input type="text" id="memo" placeholder="備考など">
+                    </div>
+                    
+                    <input type="hidden" id="editingId">
+                    <button type="submit" class="btn btn-primary" id="submitBtn">登録</button>
+                    <button type="button" class="btn btn-secondary" id="cancelBtn" onclick="cancelEdit()" style="display:none;">キャンセル</button>
+                </form>
+            </div>
+
+            <div class="stats-section">
+                <div class="stat-card">
+                    <h3>今月の勤務日数</h3>
+                    <p class="stat-value" id="monthlyHours">0日</p>
+                </div>
+                <div class="stat-card">
+                    <h3>今月の給与見込み</h3>
+                    <p class="stat-value" id="monthlySalary">¥0</p>
+                </div>
+            </div>
+
+            <div class="list-section">
+                <h2>シフト一覧</h2>
+                <div class="filter-group">
+                    <select id="filterStaff" onchange="applyFilters()">
+                        <option value="">全スタッフ</option>
+                    </select>
+                    <input type="month" id="filterMonth">
+                    <button onclick="applyFilters()" class="btn btn-secondary">絞り込み</button>
+                    <button onclick="clearFilter()" class="btn btn-secondary">クリア</button>
+                </div>
+                
+                <div class="view-toggle">
+                    <button onclick="switchView('list')" class="btn btn-view active" id="listViewBtn">リスト表示</button>
+                    <button onclick="switchView('calendar')" class="btn btn-view" id="calendarViewBtn">カレンダー表示</button>
+                </div>
+
+                <div id="shiftList"></div>
+                <div id="calendarView" style="display:none;"></div>
+            </div>
+        </div>
+        <!-- シフト管理ページ終了 -->
+
+        <!-- 本日のシフトページ -->
+        <div id="todayPage" class="page-content" style="display:none;">
+            <div class="list-section">
+                <h2>👥 本日のシフト</h2>
+                <div id="todayShiftList"></div>
+            </div>
+        </div>
+        <!-- 本日のシフトページ終了 -->
+
+        <!-- メッセージページ -->
+        <div id="messagePage" class="page-content" style="display:none;">
+            <div class="list-section">
+                <h2>💬 メッセージ</h2>
+                <div class="message-container">
+                    <div class="message-list" id="messageList"></div>
+                    <form id="messageForm" class="message-form">
+                        <select id="messageTo" required>
+                            <option value="">送信先を選択</option>
+                            <option value="全員">全員</option>
+                        </select>
+                        <input type="text" id="messageText" placeholder="メッセージを入力..." required>
+                        <button type="submit" class="btn btn-primary">送信</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <!-- メッセージページ終了 -->
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
